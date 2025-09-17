@@ -25,14 +25,22 @@ jobs:
             # Extract major.minor version, e.g., 'v1.28.4' -> '1.28'
             VERSION_MAJOR_MINOR=$(echo "${{ github.ref_name }}" | sed 's/^v//' | awk -F'.' '{print $1"."$2}')
             echo "K8S_BRANCH_VERSION=release-${VERSION_MAJOR_MINOR}" >> $GITHUB_OUTPUT
+            echo "Building for Kubernetes version: ${{ steps.get_version.outputs.K8S_VERSION }}"
+            echo "Cloning branch: ${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}"
           fi
-          echo "Building for Kubernetes version: ${{ steps.get_version.outputs.K8S_VERSION }}"
-          echo "Cloning branch: ${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}"
 
       - name: Setup Go environment
         uses: actions/setup-go@v4
         with:
           go-version: 1.24 # Use a Go version compatible with Kubernetes
+
+      - name: Download Kubernetes Components (kubectl, kubelet)
+        run: |
+          K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
+          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubelet"
+          chmod +x kubelet
 
       - name: Download and Build Kubeadm with 100-year Certs
         run: |
@@ -53,24 +61,16 @@ jobs:
           
           echo "Building kubeadm..."
           make WHAT=cmd/kubeadm GOFLAGS="-ldflags=-s"
-          cd ..
           
-      - name: Download Kubernetes Components (kubectl, kubelet, Helm, Containerd)
+      - name: Download latest Helm
         run: |
-          # Download Kubernetes components
-          K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
-          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubelet"
-          chmod +x kubelet
-
-          # Download latest stable Helm
           HELM_VERSION=$(curl -s https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
           tar -zxf helm-v${HELM_VERSION}-linux-amd64.tar.gz
           mv linux-amd64/helm helm
 
-          # Download latest stable containerd
+      - name: Download latest Containerd
+        run: |
           CONTAINERD_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz"
           # Extract containerd binaries to a local folder to avoid permission issues
@@ -90,7 +90,7 @@ jobs:
           mv ../kubectl .
           mv ../kubelet .
           mv ../helm .
-          mv ../kubernetes/_output/bin/kubeadm .
+          mv ../kubernetes/kubernetes/_output/bin/kubeadm .
           mv ../containerd-bin/bin/* .
           
           # Create placeholder CNI and systemd directories and files
