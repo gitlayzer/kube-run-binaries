@@ -129,8 +129,7 @@ jobs:
           tar -czvf ../${FILENAME} .
           cd ..
           
-      - name: Upload Binary Package
-        uses: actions/upload-artifact@v4
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
         with:
-          name: k8s-binaries
-          path: kubernetes-${{ steps.get_version.outputs.K8S_VERSION }}-linux-amd64.tar.gz
+          files: kubernetes-${{ steps.get_version.outputs.K8S_VERSION }}-linux-amd64.tar.gz
