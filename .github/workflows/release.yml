@@ -37,63 +37,79 @@ jobs:
       - name: Download Kubernetes Components (kubectl, kubelet)
         run: |
           K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
+          echo "开始下载 kubectl 和 kubelet 二进制文件..."
           curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubectl"
           chmod +x kubectl
           curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubelet"
           chmod +x kubelet
-
+          echo "下载完成，文件列表如下："
+          ls -la
+      
       - name: Download and Build Kubeadm with 100-year Certs
         run: |
           K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
           K8S_BRANCH_VERSION=${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}
           K8S_GIT_URL="https://github.com/kubernetes/kubernetes"
-          echo "Cloning Kubernetes source..."
-          echo "Cloning Kubernetes branch: $K8S_BRANCH_VERSION"
+          echo "开始克隆 Kubernetes 源码..."
           git clone --depth 1 --branch $K8S_BRANCH_VERSION $K8S_GIT_URL kubernetes
 
           cd kubernetes
 
-          echo "Modifying kubeadm source for 100-year certificates..."
+          echo "开始修改 kubeadm 源码以支持 100 年证书..."
           # Update certificate duration in constants.go
           sed -i 's/CertificateValidity = time.Hour \* 24 \* 365/CertificateValidity = time.Hour \* 24 \* 365 \* 100/' cmd/kubeadm/app/constants/constants.go
           # Update NotAfter field for CA certificates
           sed -i 's/now.Add(duration365d),/now.Add(duration365d \* 100),/' staging/src/k8s.io/client-go/util/cert/cert.go
           
-          echo "Building kubeadm..."
+          echo "开始编译 kubeadm..."
           make WHAT=cmd/kubeadm GOFLAGS="-ldflags=-s"
+          echo "编译完成，kubeadm 二进制文件已生成。文件列表如下："
+          ls -la _output/bin/
+          cd ..
           
       - name: Download latest Helm
         run: |
+          echo "开始下载最新版 Helm..."
           HELM_VERSION=$(curl -s https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
           tar -zxf helm-v${HELM_VERSION}-linux-amd64.tar.gz
           mv linux-amd64/helm helm
-
+          echo "下载完成，文件列表如下："
+          ls -la helm
+          
       - name: Download latest Containerd
         run: |
+          echo "开始下载最新版 Containerd..."
           CONTAINERD_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz"
           # Extract containerd binaries to a local folder to avoid permission issues
           mkdir containerd-bin
           tar -zxf containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz -C containerd-bin
+          echo "下载完成，文件列表如下："
+          ls -la containerd-bin/bin/
 
       - name: Package Binaries and Configuration
         run: |
           K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
           FILENAME="kubernetes-${K8S_VERSION}-linux-amd64.tar.gz"
           
+          echo "开始打包所有二进制文件和配置..."
           # Create staging directory
           mkdir k8s-binaries
           cd k8s-binaries
-
+          echo "暂存目录已创建，将移动所有文件。文件列表如下："
+          ls -la ..
+          
           # Move all binaries into the staging directory
+          echo "移动 kubectl, kubelet, helm, kubeadm, containerd 二进制文件..."
           mv ../kubectl .
           mv ../kubelet .
           mv ../helm .
-          mv ../kubernetes/kubernetes/_output/bin/kubeadm .
+          mv ../kubernetes/_output/bin/kubeadm .
           mv ../containerd-bin/bin/* .
           
           # Create placeholder CNI and systemd directories and files
+          echo "创建 CNI 和 systemd 目录及文件..."
           mkdir cni
           mkdir systemd
           echo "cni-binaries-placeholder" > cni/placeholder
@@ -101,9 +117,14 @@ jobs:
           echo "[Unit]..." > systemd/containerd.service
 
           # Create containerd config
+          echo "创建 containerd 配置文件..."
           mkdir -p containerd
           ./containerd config default > containerd/config.toml
-
+          
+          echo "所有文件已就绪。文件列表如下："
+          ls -la
+          
+          echo "开始创建最终压缩包..."
           # Create final tar.gz file
           tar -czvf ../${FILENAME} .
           cd ..
