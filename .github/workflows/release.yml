@@ -44,6 +44,7 @@ jobs:
           K8S_BRANCH_VERSION=${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}
           K8S_GIT_URL="https://github.com/kubernetes/kubernetes"
           echo "Cloning Kubernetes source..."
+          echo "Cloning Kubernetes branch: $K8S_BRANCH_VERSION"
           git clone --depth 1 --branch $K8S_BRANCH_VERSION $K8S_GIT_URL kubernetes
 
           cd kubernetes
@@ -56,21 +57,17 @@ jobs:
           
           echo "Building kubeadm..."
           make WHAT=cmd/kubeadm GOFLAGS="-ldflags=-s"
-          sudo cp _output/bin/kubeadm /usr/local/bin/kubeadm
           cd ..
           
-      - name: Download Kubernetes Components (kubectl, kubelet)
-        env:
-          K8S_VERSION: ${{ steps.get_version.outputs.K8S_VERSION }}
+      - name: Download Kubernetes Components (kubectl, kubelet, Helm, Containerd)
         run: |
-          # Download from official releases, as the provided URL is a redirect
+          # Download Kubernetes components
+          K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
           curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubectl"
           chmod +x kubectl
           curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubelet"
           chmod +x kubelet
 
-      - name: Download Latest Helm and Containerd
-        run: |
           # Download latest stable Helm
           HELM_VERSION=$(curl -s https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
@@ -80,7 +77,9 @@ jobs:
           # Download latest stable containerd
           CONTAINERD_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
           curl -LO "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz"
-          sudo tar -C /usr/local -zxf containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz
+          # Extract containerd binaries to a local folder to avoid permission issues
+          mkdir containerd-bin
+          tar -zxf containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz -C containerd-bin
 
       - name: Package Binaries and Configuration
         run: |
@@ -91,16 +90,13 @@ jobs:
           mkdir k8s-binaries
           cd k8s-binaries
 
-          # Move downloaded and built binaries
+          # Move all binaries into the staging directory
           mv ../kubectl .
           mv ../kubelet .
           mv ../helm .
-          mv /usr/local/bin/containerd .
-          mv /usr/local/bin/containerd-shim-runc-v2 .
-          mv /usr/local/bin/ctr .
-          mv /usr/local/bin/runc .
-          mv /usr/local/bin/kubeadm .
-
+          mv ../kubernetes/_output/bin/kubeadm .
+          mv ../containerd-bin/bin/* .
+          
           # Create placeholder CNI and systemd directories and files
           mkdir cni
           mkdir systemd
@@ -110,7 +106,7 @@ jobs:
 
           # Create containerd config
           mkdir -p containerd
-          containerd config default > containerd/config.toml
+          ./containerd config default > containerd/config.toml
 
           # Create final tar.gz file
           tar -czvf ../${FILENAME} .
@@ -121,4 +117,3 @@ jobs:
         with:
           name: k8s-binaries
           path: kubernetes-${{ steps.get_version.outputs.K8S_VERSION }}-linux-amd64.tar.gz
-          
