@@ -19,19 +19,15 @@ jobs:
       - name: Get Kubernetes Version from Tag
         id: get_version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "K8S_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          # Only run this step if the event is a release publish
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "K8S_VERSION=${{ github.ref_name }}" >> $GITHUB_OUTPUT
             # Extract major.minor version, e.g., 'v1.28.4' -> '1.28'
-            VERSION_MAJOR_MINOR=$(echo "${{ github.ref }}" | sed 's/^v//' | awk -F'.' '{print $1"."$2}')
+            VERSION_MAJOR_MINOR=$(echo "${{ github.ref_name }}" | sed 's/^v//' | awk -F'.' '{print $1"."$2}')
             echo "K8S_BRANCH_VERSION=release-${VERSION_MAJOR_MINOR}" >> $GITHUB_OUTPUT
-            echo "K8S_BRANCH_VERSION: release-${VERSION_MAJOR_MINOR}"
-          else
-            echo "Using default version for non-tag push"
-            # Fallback to a default version for testing
-            echo "K8S_VERSION=v1.28.0" >> $GITHUB_OUTPUT
-            echo "K8S_BRANCH_VERSION=release-1.28" >> $GITHUB_OUTPUT
           fi
           echo "Building for Kubernetes version: ${{ steps.get_version.outputs.K8S_VERSION }}"
+          echo "Cloning branch: ${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}"
 
       - name: Setup Go environment
         uses: actions/setup-go@v4
