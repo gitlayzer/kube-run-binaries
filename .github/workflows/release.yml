@@ -30,7 +30,6 @@ jobs:
           echo "Cloning branch: ${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}"
 
       - name: Setup Go environment
-        uses: actions/setup-go@v4
         with:
           go-version: 1.24 # Use a Go version compatible with Kubernetes
 
