@@ -1,0 +1,124 @@
+name: Build and Package K8s Binaries
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build_binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get Kubernetes Version from Tag
+        id: get_version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "K8S_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            # Extract major.minor version, e.g., 'v1.28.4' -> '1.28'
+            VERSION_MAJOR_MINOR=$(echo "${{ github.ref }}" | sed 's/^v//' | awk -F'.' '{print $1"."$2}')
+            echo "K8S_BRANCH_VERSION=release-${VERSION_MAJOR_MINOR}" >> $GITHUB_OUTPUT
+            echo "K8S_BRANCH_VERSION: release-${VERSION_MAJOR_MINOR}"
+          else
+            echo "Using default version for non-tag push"
+            # Fallback to a default version for testing
+            echo "K8S_VERSION=v1.28.0" >> $GITHUB_OUTPUT
+            echo "K8S_BRANCH_VERSION=release-1.28" >> $GITHUB_OUTPUT
+          fi
+          echo "Building for Kubernetes version: ${{ steps.get_version.outputs.K8S_VERSION }}"
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.24 # Use a Go version compatible with Kubernetes
+
+      - name: Download and Build Kubeadm with 100-year Certs
+        run: |
+          K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
+          K8S_BRANCH_VERSION=${{ steps.get_version.outputs.K8S_BRANCH_VERSION }}
+          K8S_GIT_URL="https://github.com/kubernetes/kubernetes"
+          echo "Cloning Kubernetes source..."
+          git clone --depth 1 --branch $K8S_BRANCH_VERSION $K8S_GIT_URL kubernetes
+
+          cd kubernetes
+
+          echo "Modifying kubeadm source for 100-year certificates..."
+          # Update certificate duration in constants.go
+          sed -i 's/CertificateValidity = time.Hour \* 24 \* 365/CertificateValidity = time.Hour \* 24 \* 365 \* 100/' cmd/kubeadm/app/constants/constants.go
+          # Update NotAfter field for CA certificates
+          sed -i 's/now.Add(duration365d),/now.Add(duration365d \* 100),/' staging/src/k8s.io/client-go/util/cert/cert.go
+          
+          echo "Building kubeadm..."
+          make WHAT=cmd/kubeadm GOFLAGS="-ldflags=-s"
+          sudo cp _output/bin/kubeadm /usr/local/bin/kubeadm
+          cd ..
+          
+      - name: Download Kubernetes Components (kubectl, kubelet)
+        env:
+          K8S_VERSION: ${{ steps.get_version.outputs.K8S_VERSION }}
+        run: |
+          # Download from official releases, as the provided URL is a redirect
+          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          curl -LO "https://dl.k8s.io/${K8S_VERSION}/bin/linux/amd64/kubelet"
+          chmod +x kubelet
+
+      - name: Download Latest Helm and Containerd
+        run: |
+          # Download latest stable Helm
+          HELM_VERSION=$(curl -s https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
+          curl -LO "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -zxf helm-v${HELM_VERSION}-linux-amd64.tar.gz
+          mv linux-amd64/helm helm
+
+          # Download latest stable containerd
+          CONTAINERD_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/v//')
+          curl -LO "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz"
+          sudo tar -C /usr/local -zxf containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz
+
+      - name: Package Binaries and Configuration
+        run: |
+          K8S_VERSION=${{ steps.get_version.outputs.K8S_VERSION }}
+          FILENAME="kubernetes-${K8S_VERSION}-linux-amd64.tar.gz"
+          
+          # Create staging directory
+          mkdir k8s-binaries
+          cd k8s-binaries
+
+          # Move downloaded and built binaries
+          mv ../kubectl .
+          mv ../kubelet .
+          mv ../helm .
+          mv /usr/local/bin/containerd .
+          mv /usr/local/bin/containerd-shim-runc-v2 .
+          mv /usr/local/bin/ctr .
+          mv /usr/local/bin/runc .
+          mv /usr/local/bin/kubeadm .
+
+          # Create placeholder CNI and systemd directories and files
+          mkdir cni
+          mkdir systemd
+          echo "cni-binaries-placeholder" > cni/placeholder
+          echo "[Unit]..." > systemd/kubelet.service
+          echo "[Unit]..." > systemd/containerd.service
+
+          # Create containerd config
+          mkdir -p containerd
+          containerd config default > containerd/config.toml
+
+          # Create final tar.gz file
+          tar -czvf ../${FILENAME} .
+          cd ..
+          
+      - name: Upload Binary Package
+        uses: actions/upload-artifact@v3
+        with:
+          name: k8s-binaries
+          path: kubernetes-${{ steps.get_version.outputs.K8S_VERSION }}-linux-amd64.tar.gz
+          
